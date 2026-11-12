@@ -1,0 +1,76 @@
+# =============================================================================
+# Conda environment: powertools
+# Project:  Google Drive File Search Utility
+# Version:  1.0.0
+# Created:  2026-11-10
+# Updated:  2026-11-10
+# -----------------------------------------------------------------------------
+# HOW TO USE THIS FILE
+#
+#   Prerequisite: Anaconda, installed at C:\ProgramData\Anaconda3\
+#   Open "Anaconda Prompt" from the Start menu, where `conda` works directly.
+#   (In a plain PowerShell window, conda isn't on PATH. Either use the full
+#   path C:\ProgramData\Anaconda3\Scripts\conda.exe in place of `conda`, or
+#   run once: C:\ProgramData\Anaconda3\Scripts\conda.exe init powershell
+#   and then restart PowerShell.)
+
+#  Placeholders: {PATH_PREFIX} = folder containing this repo; {USER_ACCOUNT} =
+#  your Windows user folder (%USERPROFILE%). Real values: untracked .env file.
+
+#   1. Go to the repository folder:
+#        cd "{PATH_PREFIX}\DrivePowerSearch"
+#
+#   2. Create the environment (first time only):
+#        conda env create -f setup\environment.yml
+#      It is created under {USER_ACCOUNT}\.conda\envs\powertools because
+#      C:\ProgramData is not writable without admin rights.
+#
+#   3. Activate it (every new terminal session):
+#        conda activate powertools
+#
+#   4. Check that it works:
+#        python -c "import googleapiclient, google_auth_oauthlib, rich, tabulate; print('powertools OK')"
+#
+#   Update the environment after editing this file:
+#        conda env update -f setup\environment.yml --prune
+#
+#   Remove the environment completely:
+#        conda deactivate
+#        conda env remove -n powertools
+#
+# PACKAGE SOURCE POLICY
+#   - All packages come from conda-forge first.
+#   - Only packages that are NOT available on conda-forge go in the `pip:`
+#     section at the bottom. As of 2026-11-10, every required package is on
+#     conda-forge, so the pip section is empty (commented out).
+#   - Strict channel priority is recommended so that conda-forge always wins:
+#        conda config --set channel_priority strict
+# =============================================================================
+
+name: powertools
+
+channels:
+  - conda-forge
+  - nodefaults            # Do not fall back to the Anaconda "defaults" channel
+
+dependencies:
+  # --- Runtime --------------------------------------------------------------
+  - python=3.12
+
+  # --- Google Drive API access ------------------------------------------------
+  - google-api-python-client>=2.100   # Drive API v3 client (googleapiclient)
+  - google-auth>=2.20                 # Core credentials (used by auth.py)
+  - google-auth-oauthlib>=1.0         # OAuth "Desktop app" sign-in flow
+  - google-auth-httplib2>=0.2         # HTTP transport for the API client
+
+  # --- Terminal output --------------------------------------------------------
+  - rich>=13.0                        # Readable terminal tables
+  - tabulate>=0.9                     # Alternative plain-text tables
+
+  # --- Testing ----------------------------------------------------------------
+  - pytest>=8.0                       # Unit tests (uses built-in unittest.mock)
+
+  # --- pip (fallback only) ----------------------------------------------------
+  - pip                               # Kept so the pip section below works
+  # - pip:
+  #     - some-package-not-on-conda-forge==1.2.3

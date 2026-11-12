@@ -1,0 +1,7 @@
+# For pip users. The recommended setup is the conda environment in setup/environment.yml.
+google-api-python-client>=2.100
+google-auth>=2.20
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.2
+rich>=13.0
+pytest>=8.0

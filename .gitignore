@@ -1,0 +1,54 @@
+# =============================================================================
+# Reusable .gitignore for Python projects
+# Version: 1.0.0   Created: 2026-11-11   Updated: 2026-11-11
+# -----------------------------------------------------------------------------
+# Nothing below names this project. Copy the file unchanged into any repo.
+# Conventions it relies on:
+#   - Private, never-commit folders start with "_private" (e.g. _private_transcripts/)
+#   - Generated output goes in logs/, output/, or a folder ending in "_results"
+# Pattern notes:
+#   - "name/" (trailing slash only) matches that folder at ANY depth, with
+#     everything inside it, including subfolders and dot-files.
+#   - A slash elsewhere ("a/b") anchors the pattern to this file's folder only.
+#   - .gitignore only affects untracked files, and `git add -f` overrides it.
+# =============================================================================
+
+# --- Private material: never commit ----------------------------------------
+*_private*/
+*transcript*
+
+# --- Secrets ---------------------------------------------------------------
+.env
+.env.*
+credentials.json
+# *credentials*.*   # exclude code files like "credentials_check.py"
+client_secret*.json
+token.json
+*.pem
+*.key
+
+
+# --- Generated output ------------------------------------------------------
+logs/
+output/
+*_results/
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# --- OS / editor -----------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
