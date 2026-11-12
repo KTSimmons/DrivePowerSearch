@@ -6,4 +6,4 @@ terminal, and saves Markdown and HTML copies.
 Spec: docs/SPEC.md (v1.3.x)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

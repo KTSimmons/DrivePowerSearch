@@ -121,3 +121,73 @@ def test_unwritable_output_exit_5(tmp_path, monkeypatch, capsys):
     blocker.write_text("x")
     assert run((blocker, tmp_path / "logs")) == cli.EXIT_OUTPUT
     assert "Could not write reports" in capsys.readouterr().err
+
+
+# --- Local Google Drive for desktop source -----------------------------------
+
+@pytest.fixture
+def fake_mount(tmp_path):
+    root = tmp_path / "G"
+    target = root / "My Drive" / "Projects" / "quarterly report.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+    return root
+
+
+def no_api(monkeypatch):
+    def fail(*a, **k):
+        raise AssertionError("the API must not be used for a local search")
+
+    monkeypatch.setattr(cli.auth, "get_credentials", fail)
+    monkeypatch.setattr(cli.auth, "build_drive_service", fail)
+
+
+def test_local_search_end_to_end(dirs, monkeypatch, capsys, fake_mount):
+    no_api(monkeypatch)
+    monkeypatch.setenv("COLUMNS", "300")  # long temp paths would otherwise wrap names in the table
+    assert run(dirs, "--source", "local", "--drive-root", str(fake_mount)) == cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "quarterly report.pdf" in out and "local Google Drive" in out
+    md = next(dirs[0].glob("*.md")).read_text(encoding="utf-8")
+    assert "| Source | local Google Drive (" in md
+    assert "Projects" in md and "**Files found:** 1" in md
+    page = next(dirs[0].glob("*.html")).read_text(encoding="utf-8")
+    assert 'href="file:///' in page
+    assert "Scanned" in log_text(dirs) and "quarterly report.pdf" not in log_text(dirs)
+
+
+def test_auto_uses_local_mount_when_found(dirs, monkeypatch, fake_mount):
+    no_api(monkeypatch)
+    monkeypatch.setattr(cli.local_search, "find_drive_mount", lambda *a, **k: fake_mount)
+    assert run(dirs) == cli.EXIT_OK
+    assert "| Source | local Google Drive (" in next(dirs[0].glob("*.md")).read_text(encoding="utf-8")
+
+
+def test_auto_falls_back_to_api_without_mount(dirs, monkeypatch):
+    fake_drive(monkeypatch)  # conftest already hides any real mount
+    assert run(dirs) == cli.EXIT_OK
+    assert "| Source | Google Drive API |" in next(dirs[0].glob("*.md")).read_text(encoding="utf-8")
+
+
+def test_local_requested_but_no_mount_exit_4(dirs, monkeypatch, capsys):
+    no_api(monkeypatch)
+    assert run(dirs, "--source", "local") == cli.EXIT_DRIVE
+    assert "Google Drive for desktop wasn't found" in capsys.readouterr().err
+
+
+def test_bad_drive_root_exit_4(dirs, monkeypatch, capsys, tmp_path):
+    no_api(monkeypatch)
+    assert run(dirs, "--drive-root", str(tmp_path)) == cli.EXIT_DRIVE
+    assert "doesn't contain a 'My Drive' folder" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value, message", [("0", "between 1 and 10"), ("11", "between 1 and 10"), ("ten", "not a whole number")])
+def test_bad_threads_exit_2(dirs, capsys, value, message):
+    assert run(dirs, "--threads", value) == cli.EXIT_USAGE
+    assert message in capsys.readouterr().err
+
+
+def test_threads_shown_in_report(dirs, monkeypatch, fake_mount):
+    no_api(monkeypatch)
+    assert run(dirs, "--drive-root", str(fake_mount), "--threads", "4") == cli.EXIT_OK
+    assert "| Threads | 4 |" in next(dirs[0].glob("*.md")).read_text(encoding="utf-8")

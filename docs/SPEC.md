@@ -2,11 +2,13 @@
 
 | | |
 |---|---|
-| **Version** | 1.3.1 |
+| **Version** | 1.5.0 |
 | **Created** | 2026-11-10 |
-| **Last updated** | 2026-11-10 |
+| **Last updated** | 2026-11-12 |
 
 **Changelog**
+- **1.5.0** (2026-11-12): The local source lists folders in parallel, using up to 10 threads (`--threads`, default 10).
+- **1.4.0** (2026-11-12): Added a second search source: the **local Google Drive for desktop** mount, which needs no Google Cloud credentials. New `--source` and `--drive-root` options, and a new `local_search.py` module. The API source is unchanged.
 - **1.3.1** (2026-11-10): Moved from the Prompt_Engineering repo into `drive_search/docs/SPEC.md` (from Prompt_Engineering commit 27c4c13). No requirement changes.
 - **1.3.0** (2026-11-10): The log folder is created on first run, its write access is checked on every run, and there is a fallback location. The default log folder is now next to the utility instead of in the current working directory.
 - **1.2.0** (2026-11-10): Added a separate `logging_setup` module that records every operation, plus `--log-level` and `--log-dir` options.
@@ -75,6 +77,9 @@ The log folder must exist and be writable before the tool does anything else, in
 | `--created-on YYYY-MM-DD` | No | Only files created on this calendar date |
 | `--created-after YYYY-MM-DD` / `--created-before YYYY-MM-DD` | No | Inclusive date range. Can't be combined with `--created-on` |
 | `--include-shared-drives` | No | Also search shared drives, not just My Drive |
+| `--source auto\|local\|api` | No | Where to search. `local`: the Google Drive for desktop mount. `api`: the Drive API. Default `auto`: local if a mount is found, otherwise the API |
+| `--threads N` | No | Local source only: how many folders to list at the same time, 1–10. Default `10`. `1` scans one folder at a time |
+| `--drive-root PATH` | No | The Google Drive for desktop mount (the folder that contains `My Drive`), for example `G:\`. Default: the `GDRIVE_LOCAL_ROOT` environment variable, then auto-detect |
 | `--output-dir PATH` | No | Where to save reports. Default: `./search_results` |
 | `--log-level LEVEL` | No | How much detail goes in the log file: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. Default: `INFO` |
 | `--log-dir PATH` | No | Where to save log files. Default: a `logs` folder next to the utility's own files (see "Log folder setup") |
@@ -89,6 +94,21 @@ Validate the inputs. Reject bad dates, `--created-on` combined with a range, and
 - Handle pagination (`nextPageToken`) so every match is returned, not just the first page.
 - **Full path:** Drive has no real paths. Rebuild one by walking each file's `parents` up to the root, for example `My Drive/Projects/2026/report.pdf`. Cache folder lookups to avoid repeated API calls. If a file has several parents, show the first one. If the path can't be resolved (for example, a file shared with me whose parent I can't see), show `(shared with me)/<name>`.
 - Sort results by creation date, newest first.
+
+## Local Drive source (`local_search.py`, added in 1.4.0)
+Search the files that **Google Drive for desktop** shows as a drive (for example `G:\My Drive`), without the API or any credentials.
+
+- **Finding the mount:** use `--drive-root` if given, else the `GDRIVE_LOCAL_ROOT` environment variable, else check drive letters D–Z for a folder named `My Drive`. Never hard-code a drive letter or a user path. If `--drive-root` is given but contains no `My Drive` folder, stop with a clear error.
+- **What to search:** `My Drive`, plus `Shared drives` with `--include-shared-drives`. Skip hidden and internal folders whose names start with `.` or `$` (`.shortcut-targets-by-id`, `.Encrypted`, `$RECYCLE.BIN`). This also keeps the bin out of the results, like `trashed = false` does for the API.
+- **Read details only:** use directory listings and file details (`os.scandir`, `stat`). Never open or read files, because that would make Drive for desktop download them.
+- **Matching:** files **and** folders. Default: the name *contains* the text anywhere, ignoring case. This is a true substring match, unlike the API's word-prefix matching. `--exact`: the whole name, case-sensitive. Google Docs, Sheets, and Slides appear locally with extensions such as `.gdoc`, so `--exact` must include the extension.
+- **Dates:** creation time from the file system (`st_birthtime`, falling back to `st_ctime` on Windows). Use the same local-day window as the API search.
+- **Results:** the same shape as API results, so reporting is shared. **Full path** is the real local path, for example `G:\My Drive\Projects\report.pdf`. The HTML link is a `file:///` link that opens the file with its usual app.
+- **Robustness:** a folder that can't be read is skipped and counted, not fatal. Log a single WARNING with the count.
+- **Parallel scanning (1.5.0):** listing a folder on the mount is slow because Drive for desktop may have to fetch it from Google, but it uses almost no CPU. Use a `ThreadPoolExecutor` with `--threads` workers (maximum 10). Each task lists one folder and checks its entries. As each folder finishes, its subfolders are submitted as new tasks. Results must be **identical whatever the thread count**: sort by creation time, newest first, with the path as a tie-breaker so the order is stable. Ctrl+C cancels any tasks that haven't started. Log the thread count at INFO.
+- **Logging:** INFO for the mount used, the number of folders and files scanned, the number of matches, and the time taken. DEBUG for individual file names and unreadable folders.
+- **The report** shows which source was used.
+- **Exit code 4** if `--source local` is requested and no mount can be found.
 
 ## Report content (same in all three outputs)
 1. Title: "Google Drive Search Report"
@@ -122,6 +142,7 @@ Keep the parts separate so each can be tested on its own:
 | `cli.py` | Argument parsing, input checks, calling `setup_logging` first, and turning exceptions into friendly messages and exit codes |
 | `drive_search.py` | Building the query, calling the API, and pagination. Receives a Drive service object and never creates one itself |
 | `paths.py` | Rebuilding full paths from parent folders, with caching |
+| `local_search.py` | Finding the Google Drive for desktop mount and searching it from the file system (see "Local Drive source"). Never imports `auth` |
 | `reports.py` | Rendering the terminal, Markdown, and HTML outputs |
 
 The search module receives the Drive service as an argument (dependency injection). This makes it easy to pass in a mock during tests. Add type hints and short docstrings.
@@ -153,6 +174,9 @@ The search module receives the Drive service as an argument (dependency injectio
 - At the default `INFO` level, the log contains no file names. At `DEBUG`, it does.
 - Only `logging_setup.py` configures logging handlers. A search for `basicConfig`, `addHandler`, and `print(` finds none elsewhere, except `print` calls that output the report.
 - `pytest` passes.
+- With Google Drive for desktop running and no `credentials.json`, `--source local` (or the default `auto`) finds known files by part of their name, including in subfolders, and the HTML report's links open them.
+- `--threads 1` and `--threads 10` return exactly the same results in the same order. `--threads 0` and `--threads 11` are rejected (exit code 2).
+- Tests for the local source use a temporary folder as a fake mount. They never scan the real drive and never make network calls.
 
 ## Out of scope
 Downloading or changing files, searching file contents, and a GUI.

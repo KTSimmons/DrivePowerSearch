@@ -76,6 +76,11 @@ class TestHtml:
         page = render_html(report([row(link="javascript:alert(1)")]))
         assert "javascript:" not in page
 
+    def test_local_file_link_is_clickable(self):
+        page = render_html(report([row(path="G:\\My Drive\\a b.txt", link="file:///G:/My%20Drive/a%20b.txt")]))
+        assert '<a href="file:///G:/My%20Drive/a%20b.txt" target="_blank"' in page
+        assert "G:\\My Drive\\a b.txt</a>" in page
+
     def test_self_contained(self):
         page = render_html(report())
         assert "<link" not in page

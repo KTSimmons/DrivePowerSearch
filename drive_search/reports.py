@@ -162,8 +162,9 @@ def _h(text: str) -> str:
 
 
 def _path_cell(row: ResultRow) -> str:
-    # Only real https Drive links become clickable (never javascript: etc.).
-    if row.link and row.link.lower().startswith("https://"):
+    # Only https Drive links and file:/// links (local source) become clickable,
+    # never javascript: or other schemes.
+    if row.link and row.link.lower().startswith(("https://", "file:///")):
         return f'<a href="{_h(row.link)}" target="_blank" rel="noopener noreferrer">{_h(row.path)}</a>'
     return _h(row.path)
 

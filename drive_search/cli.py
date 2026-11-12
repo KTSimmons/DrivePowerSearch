@@ -18,8 +18,9 @@ from typing import Sequence
 from rich.console import Console
 from rich.text import Text
 
-from drive_search import __version__, auth
+from drive_search import __version__, auth, local_search
 from drive_search.auth import AuthError
+from drive_search.local_search import LocalDriveError
 from drive_search.logging_setup import VALID_LEVELS, LoggingInfo, setup_logging, shutdown_logging
 from drive_search.paths import PathResolver
 from drive_search.reports import Report, ReportWriteError, ResultRow, parse_drive_time, render_terminal, save_reports
@@ -45,6 +46,17 @@ def parse_date(text: str) -> date:
         return datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError:
         raise argparse.ArgumentTypeError(f"'{text}' is not a valid date; use YYYY-MM-DD, for example 2026-11-10")
+
+
+def parse_threads(text: str) -> int:
+    """argparse type for --threads: an integer from 1 to MAX_THREADS."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a whole number")
+    if not 1 <= value <= local_search.MAX_THREADS:
+        raise argparse.ArgumentTypeError(f"must be between 1 and {local_search.MAX_THREADS}, got {value}")
+    return value
 
 
 def _add_logging_args(parser: argparse.ArgumentParser, strict: bool) -> None:
@@ -73,6 +85,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--created-after", type=parse_date, metavar="YYYY-MM-DD", help="Created on or after this date")
     parser.add_argument("--created-before", type=parse_date, metavar="YYYY-MM-DD", help="Created on or before this date")
     parser.add_argument("--include-shared-drives", action="store_true", help="Also search shared drives")
+    parser.add_argument(
+        "--source",
+        choices=("auto", "local", "api"),
+        default="auto",
+        help="local = Google Drive for desktop mount, api = Drive API, auto = local if found, else api (default: auto)",
+    )
+    parser.add_argument(
+        "--threads",
+        type=parse_threads,
+        default=local_search.DEFAULT_THREADS,
+        metavar="N",
+        help=f"Local source: folders to list in parallel, 1-{local_search.MAX_THREADS} (default: {local_search.DEFAULT_THREADS})",
+    )
+    parser.add_argument(
+        "--drive-root",
+        metavar="PATH",
+        help="Google Drive for desktop mount, e.g. G:\\ (default: GDRIVE_LOCAL_ROOT, then auto-detect)",
+    )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Report folder (default: {DEFAULT_OUTPUT_DIR})")
     _add_logging_args(parser, strict=True)
     return parser
@@ -98,15 +128,17 @@ def _fmt(value: object) -> str:
     return str(value)
 
 
-def search_terms(args: argparse.Namespace, info: LoggingInfo) -> list[tuple[str, str]]:
+def search_terms(args: argparse.Namespace, info: LoggingInfo, source_label: str) -> list[tuple[str, str]]:
     """Every argument and its value, including defaults, for the report."""
     return [
         ("Name", args.name),
+        ("Source", source_label),
         ("Match", "exact (case-sensitive)" if args.exact else "contains (case-insensitive)"),
         ("Created on", _fmt(args.created_on)),
         ("Created after", _fmt(args.created_after)),
         ("Created before", _fmt(args.created_before)),
         ("Include shared drives", _fmt(args.include_shared_drives)),
+        ("Threads", str(args.threads) if source_label.startswith("local") else "n/a (API source)"),
         ("Output folder", str(Path(args.output_dir).expanduser().resolve())),
         ("Log level", args.log_level),
         ("Log folder", str(info.log_dir) if info.log_dir else "(console only)"),
@@ -132,8 +164,6 @@ def _run(argv: Sequence[str], info: LoggingInfo) -> int:
             logger.info("Invalid arguments; nothing searched.")
         return code
 
-    terms = search_terms(args, info)
-    logger.info("Search arguments: %s", "; ".join(f"{k}={v}" for k, v in terms))
     criteria = SearchCriteria(
         name=args.name,
         exact=args.exact,
@@ -145,26 +175,43 @@ def _run(argv: Sequence[str], info: LoggingInfo) -> int:
     console = Console()
 
     try:
-        credentials = auth.get_credentials()
-        service = auth.build_drive_service(credentials)
-        files = search_files(service, criteria)
-        resolver = PathResolver(service)
+        mount = None
+        if args.source in ("auto", "local"):
+            mount = local_search.resolve_mount(args.drive_root)
+            if mount is None and args.source == "local":
+                raise LocalDriveError(
+                    "Google Drive for desktop wasn't found (no drive letter has a 'My Drive' folder). "
+                    "Make sure it's running and signed in, or pass --drive-root (for example G:\\)."
+                )
+        source_label = f"local Google Drive ({mount})" if mount else "Google Drive API"
+        terms = search_terms(args, info, source_label)
+        logger.info("Search arguments: %s", "; ".join(f"{k}={v}" for k, v in terms))
+
+        if mount is not None:
+            files = local_search.search_local(mount, criteria, threads=args.threads)
+            paths = [f["localPath"] for f in files]
+        else:
+            credentials = auth.get_credentials()
+            service = auth.build_drive_service(credentials)
+            files = search_files(service, criteria)
+            resolver = PathResolver(service)
+            paths = [resolver.resolve(f) for f in files]
         rows = [
             ResultRow(
                 name=f.get("name") or "(unnamed)",
                 created=parse_drive_time(f.get("createdTime")),
                 modified=parse_drive_time(f.get("modifiedTime")),
-                path=resolver.resolve(f),
+                path=path,
                 link=f.get("webViewLink"),
             )
-            for f in files
+            for f, path in zip(files, paths)
         ]
         report = Report(search_terms=terms, run_at=run_at, rows=rows)
         render_terminal(report, console)
         md_path, html_path = save_reports(report, args.output_dir)
     except AuthError as exc:
         return _fail(info, str(exc), exc, EXIT_AUTH)
-    except DriveSearchError as exc:
+    except (DriveSearchError, LocalDriveError) as exc:
         return _fail(info, str(exc), exc, EXIT_DRIVE)
     except ReportWriteError as exc:
         return _fail(info, str(exc), exc, EXIT_OUTPUT)
